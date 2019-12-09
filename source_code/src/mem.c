@@ -91,7 +91,10 @@ static int translate(
 			 * to [p_index] field of page_table->table[i] to 
 			 * produce the correct physical address and save it to
 			 * [*physical_addr]  */
-			physical_addr = offset + page_table->table[i].p_index;
+			// physical_addr = offset + page_table->table[i].p_index;
+
+			// "địa chỉ vật lý" = "p_index" + "offset" # tìm p_index bằng cách tra bảng page
+			* physical_addr = (page_table->table[i].p_index << OFFSET_LEN) | offset;
 			return 1;
 		}
 	}
