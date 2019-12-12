@@ -144,11 +144,7 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 		 * 	- Add entries to segment table page tables of [proc]
 		 * 	  to ensure accesses to allocated memory slot is
 		 * 	  valid. */
-		for(int i = 0; i<NUM_PAGES, pages_need>0; i++)
-		{
-			if(_mem_stat[i].proc == 0)
-				pages_need--;
-		}
+		
 	}
 	pthread_mutex_unlock(&mem_lock);
 	return ret_mem;
