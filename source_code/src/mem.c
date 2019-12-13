@@ -159,6 +159,44 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 	 * 	  the process [proc].
 	 * 	- Remember to use lock to protect the memory from other
 	 * 	  processes.  */
+	 
+	addr_t virtual_addr  = address; // virtual address to free in process
+	addr_t physical_addr = 0;		// physical address to free in memory
+
+	// find physical page in memory
+	if(!translate(virtual_addr, &physical_addr, proc)) return 1;
+
+	// clear physical page in memory
+	addr_t p_segm_page_index = physical_addr >> OFFSET_LEN;
+	int num_pages = 0;
+
+	for(int i = p_segm_page_index; i != -1; i = _mem_stat[i].next) {
+		_mem_stat[i].proc = 0;		// clear physical memory
+		num_pages = num_pages + 1; 	// count pages
+	}
+
+	for(int i = 0; i < num_pages; ++i) {
+		addr_t v_page_addr = virtual_addr + i*PAGE_SIZE;
+		addr_t first_lv  = get_first_lv(v_page_addr);
+		addr_t second_lv = get_second_lv(v_page_addr);
+
+		page_table_t * page_table = get_page_table(first_lv, proc->seg_table);
+		if(page_table == NULL) {puts("Error\n"); continue;}
+
+		for(int j = 0; j < page_table->size; ++j)
+		if(page_table->table[j].v_index == second_lv) {
+			int last = --page_table->size;
+			page_table->table[j] = page_table->table[last];
+			break;
+		}
+
+		if(page_table->size == 0)
+			remove_page_table(first_lv, proc->seg_table);
+	}
+
+	proc->bp = proc->bp - num_pages*PAGE_SIZE;
+
+	
 	return 0;
 }
 
