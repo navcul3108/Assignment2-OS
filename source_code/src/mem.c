@@ -49,13 +49,17 @@ static struct page_table_t * get_page_table(
 	 * field of the row is equal to the index
 	 *
 	 * */
-
+	pthread_mutex_lock(&mem_lock);
 	int i;
 	for (i = 0; i < seg_table->size; i++) {
 		// Enter your code here
 		if(index==seg_table->table[i].v_index)
+		{
+			pthread_mutex_unlock(&mem_lock);
 			return seg_table->table[i].pages;
+		}	
 	}
+	pthread_mutex_unlock(&mem_lock);
 	return NULL;
 
 }
@@ -67,7 +71,7 @@ static int translate(
 		addr_t virtual_addr, 	// Given virtual address
 		addr_t * physical_addr, // Physical address to be returned
 		struct pcb_t * proc) {  // Process uses given virtual address
-
+	pthread_mutex_lock(&mem_lock);
 	/* Offset of the virtual address */
 	addr_t offset = get_offset(virtual_addr);
 	/* The first layer index */
@@ -79,6 +83,7 @@ static int translate(
 	struct page_table_t * page_table = NULL;
 	page_table = get_page_table(first_lv, proc->seg_table);
 	if (page_table == NULL) {
+		pthread_mutex_unlock(&mem_lock);
 		return 0;
 	}
 
@@ -90,9 +95,11 @@ static int translate(
 			 * produce the correct physical address and save it to
 			 * [*physical_addr]  */
 			*physical_addr=page_table->table[i].p_index*PAGE_SIZE+offset;
+			pthread_mutex_unlock(&mem_lock);
 			return 1;
 		}
 	}
+	pthread_mutex_unlock(&mem_lock);
 	return 0;	
 }
 
