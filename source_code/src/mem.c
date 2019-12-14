@@ -53,6 +53,8 @@ static struct page_table_t * get_page_table(
 	int i;
 	for (i = 0; i < seg_table->size; i++) {
 		// Enter your code here
+		if(index==seg_table->table[i].v_index)
+			return &seg_table->table[i];
 	}
 	return NULL;
 
@@ -87,6 +89,7 @@ static int translate(
 			 * to [p_index] field of page_table->table[i] to 
 			 * produce the correct physical address and save it to
 			 * [*physical_addr]  */
+			*physical_addr=page_table->table[i].p_index*PAGE_SIZE+offset;
 			return 1;
 		}
 	}
@@ -113,17 +116,70 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 	 * to know whether this page has been used by a process.
 	 * For virtual memory space, check bp (break pointer).
 	 * */
+
+	//Check logical memory
+	int avl_frame_idx[num_pages];
+	if(proc->bp+num_pages * PAGE_SIZE < (1<<ADDRESS_SIZE))
+	{
+		//Check physical memory to know how many avaiable page
+		int i;
+		int idx=0;
+		for(i=0;i<NUM_PAGES;++i)
+		{
+			if(_mem_stat[i].proc==0)//Avaiable page
+				avl_frame_idx[idx++]=i;
+			if(idx==num_pages)
+			{
+				mem_avail=1;
+				break;
+			}	
+		}
+	}
 	
 	if (mem_avail) {
 		/* We could allocate new memory region to the process */
 		ret_mem = proc->bp;
 		proc->bp += num_pages * PAGE_SIZE;
+		
 		/* Update status of physical pages which will be allocated
 		 * to [proc] in _mem_stat. Tasks to do:
 		 * 	- Update [proc], [index], and [next] field
 		 * 	- Add entries to segment table page tables of [proc]
 		 * 	  to ensure accesses to allocated memory slot is
 		 * 	  valid. */
+		int i;
+		int temp_size;
+		int first_lv=get_first_lv(ret_mem);
+		int second_lv=get_second_lv(ret_mem);
+		struct page_table_t* page_tbl=get_page_table(first_lv,proc->seg_table);
+
+		for(i=0;i<num_pages;++i)
+		{
+			//Update [proc], [index], and [next] field
+			_mem_stat[avl_frame_idx[i]].proc=proc->pid;
+			_mem_stat[avl_frame_idx[i]].index=i;
+			_mem_stat[avl_frame_idx[i]].next= i==num_pages-1 ? i+1 : -1;
+
+			//Add entry to segment table, page table;
+			if(second_lv==1<<PAGE_LEN)//table index =32
+			{
+				second_lv=0;
+				++first_lv;
+				int seg_idx;
+				for(seg_idx=0;seg_idx< 1<<SEGMENT_LEN ; ++seg_idx)//Find the first empty segment
+				{
+					if(proc->seg_table->table[seg_idx].pages->size==0) 
+					{
+						page_tbl=proc->seg_table->table[seg_idx].pages;
+						proc->seg_table->table[seg_idx].v_index=first_lv;
+					}
+				}
+			}
+
+			temp_size=page_tbl->size++;
+			page_tbl->table[temp_size].v_index=second_lv++;
+			page_tbl->table[temp_size].p_index=avl_frame_idx[i];
+		}
 	}
 	pthread_mutex_unlock(&mem_lock);
 	return ret_mem;
@@ -138,6 +194,55 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 	 * 	  the process [proc].
 	 * 	- Remember to use lock to protect the memory from other
 	 * 	  processes.  */
+	pthread_mutex_lock(&mem_lock);
+	int first_lv=get_first_lv(address);
+	int second_lv=get_second_lv(address);
+	struct page_table_t* page_table=get_page_table(first_lv,proc->seg_table);
+	int phy_idx=-1;
+	int i;
+
+	for(i=0;i< 1<<PAGE_LEN;++i)
+	{
+		if(page_table->table[i].v_index==second_lv)
+		{
+			phy_idx=page_table->table[i].p_index;
+			break;
+		}	
+	}
+	if(_mem_stat[phy_idx].index==0)
+	{
+		int size_page_tbl,iP;
+
+		while(phy_idx!=-1)
+		{
+			
+			_mem_stat[phy_idx].proc=0;
+			if(second_lv==1<<PAGE_LEN)
+			{
+				second_lv=0;
+				++first_lv;
+			}
+			page_table=get_page_table(first_lv,proc);
+			size_page_tbl=page_table->size;
+			for(iP=0;iP<size_page_tbl;++iP)//Remove unused page in page table
+			{
+				if(page_table->table[iP].v_index==second_lv)
+				{
+					page_table->table[iP].v_index=-1;
+					page_table->size--;
+					break;
+				}
+			}
+			++second_lv;
+			phy_idx=_mem_stat[phy_idx].next;
+		}
+	}
+	else
+	{
+		pthread_mutex_unlock(&mem_lock);
+		return -1;
+	}
+	pthread_mutex_unlock(&mem_lock);		
 	return 0;
 }
 
