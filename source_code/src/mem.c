@@ -1,7 +1,7 @@
 
 #include "mem.h"
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 #include <stdio.h>
 
@@ -49,19 +49,17 @@ static struct page_table_t * get_page_table(
 	 * field of the row is equal to the index
 	 *
 	 * */
-	pthread_mutex_lock(&mem_lock);
 	int i;
 	for (i = 0; i < seg_table->size; i++) {
 		// Enter your code here
 		if(index==seg_table->table[i].v_index)
 		{
-			pthread_mutex_unlock(&mem_lock);
+			if(seg_table->table[i].pages==NULL)
+				seg_table->table[i].pages=malloc(sizeof(struct page_table_t));
 			return seg_table->table[i].pages;
 		}	
-	}
-	pthread_mutex_unlock(&mem_lock);
+	}		
 	return NULL;
-
 }
 
 /* Translate virtual address to physical address. If [virtual_addr] is valid,
@@ -71,7 +69,6 @@ static int translate(
 		addr_t virtual_addr, 	// Given virtual address
 		addr_t * physical_addr, // Physical address to be returned
 		struct pcb_t * proc) {  // Process uses given virtual address
-	pthread_mutex_lock(&mem_lock);
 	/* Offset of the virtual address */
 	addr_t offset = get_offset(virtual_addr);
 	/* The first layer index */
@@ -83,7 +80,6 @@ static int translate(
 	struct page_table_t * page_table = NULL;
 	page_table = get_page_table(first_lv, proc->seg_table);
 	if (page_table == NULL) {
-		pthread_mutex_unlock(&mem_lock);
 		return 0;
 	}
 
@@ -95,11 +91,9 @@ static int translate(
 			 * produce the correct physical address and save it to
 			 * [*physical_addr]  */
 			*physical_addr=page_table->table[i].p_index*PAGE_SIZE+offset;
-			pthread_mutex_unlock(&mem_lock);
 			return 1;
 		}
 	}
-	pthread_mutex_unlock(&mem_lock);
 	return 0;	
 }
 
@@ -111,8 +105,8 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 	 * byte in the allocated memory region to [ret_mem].
 	 * */
 
-	uint32_t num_pages = (size % PAGE_SIZE) ? size / PAGE_SIZE :
-		size / PAGE_SIZE + 1; // Number of pages we will use
+	uint32_t num_pages = (size % PAGE_SIZE) ? size / PAGE_SIZE +1 :
+		size / PAGE_SIZE ; // Number of pages we will use
 	int mem_avail = 0; // We could allocate new memory region or not?
 
 	/* First we must check if the amount of free memory in
@@ -126,7 +120,7 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 
 	//Check logical memory
 	int avl_frame_idx[num_pages];
-	if(proc->bp+num_pages * PAGE_SIZE < (1<<ADDRESS_SIZE))
+	if( proc->bp + num_pages*PAGE_SIZE < (1<<ADDRESS_SIZE))
 	{
 		//Check physical memory to know how many avaiable page
 		int i;
@@ -159,14 +153,25 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 		int temp_size;
 		int first_lv=get_first_lv(ret_mem);
 		int second_lv=get_second_lv(ret_mem);
+		if(ret_mem==PAGE_SIZE)//segment table is empty
+		{
+			proc->seg_table->size++;
+			proc->seg_table->table[0].v_index=0;
+		}
 		struct page_table_t* page_tbl=get_page_table(first_lv,proc->seg_table);
+		if (page_tbl == NULL) {
+			pthread_mutex_unlock(&mem_lock);
+			return 0;
+		}
 
+		printf("Alloc %d frame tai cac frame : ",num_pages);
 		for(i=0;i<num_pages;++i)
 		{
+			printf("%d ",avl_frame_idx[i]);
 			//Update [proc], [index], and [next] field
 			_mem_stat[avl_frame_idx[i]].proc=proc->pid;
 			_mem_stat[avl_frame_idx[i]].index=i;
-			_mem_stat[avl_frame_idx[i]].next= i==num_pages-1 ? i+1 : -1;
+			_mem_stat[avl_frame_idx[i]].next= i==num_pages-1 ? -1 : avl_frame_idx[i+1] ;
 
 			//Add entry to segment table, page table;
 			if(second_lv==1<<PAGE_LEN)//table index =32
@@ -188,6 +193,7 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 			page_tbl->table[temp_size].v_index=second_lv++;
 			page_tbl->table[temp_size].p_index=avl_frame_idx[i];
 		}
+		printf("\n");
 	}
 	pthread_mutex_unlock(&mem_lock);
 	return ret_mem;
@@ -208,6 +214,10 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 	struct page_table_t* page_table=get_page_table(first_lv,proc->seg_table);
 	int phy_idx=-1;
 	int i;
+	if (page_table == NULL) {
+		pthread_mutex_unlock(&mem_lock);
+		return 0;
+	}
 
 	for(i=0;i< 1<<PAGE_LEN;++i)
 	{
@@ -220,10 +230,10 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 	if(_mem_stat[phy_idx].index==0)
 	{
 		int size_page_tbl,iP;
-
+		printf("Free tai cac frame : ");
 		while(phy_idx!=-1)
 		{
-			
+			printf("%d ",phy_idx);
 			_mem_stat[phy_idx].proc=0;
 			if(second_lv==1<<PAGE_LEN)
 			{
@@ -231,6 +241,10 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 				++first_lv;
 			}
 			page_table=get_page_table(first_lv,proc->seg_table);
+			if (page_table == NULL) {
+				pthread_mutex_unlock(&mem_lock);
+				return 0;
+			}
 			size_page_tbl=page_table->size;
 			for(iP=0;iP<size_page_tbl;++iP)//Remove unused page in page table
 			{
@@ -244,6 +258,7 @@ int free_mem(addr_t address, struct pcb_t * proc) {
 			++second_lv;
 			phy_idx=_mem_stat[phy_idx].next;
 		}
+		printf("\n");
 	}
 	else
 	{
